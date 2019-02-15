@@ -2,8 +2,10 @@ package puppetdb
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -54,7 +56,7 @@ type FactJson struct {
 }
 
 type NodeJson struct {
-	Name             string `json:"name"`
+	Certname         string `json:"certname"`
 	Deactivated      string `json:"deactivated"`
 	CatalogTimestamp string `json:"catalog_timestamp"`
 	FactsTimestamp   string `json:"facts_timestamp"`
@@ -106,6 +108,34 @@ func NewClientWithTimeout(baseUrl string, verbose bool, timeout int) *Client {
 	return &Client{baseUrl, "", "", client, verbose}
 }
 
+func NewClientWithTLS(baseUrl, certFile, caFile, keyFile string, sslVerify, verbose bool) *Client {
+	// Load client cert
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Load CA cert
+	caCert, err := ioutil.ReadFile(caFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	// Setup HTTPS client
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            caCertPool,
+		InsecureSkipVerify: !sslVerify,
+	}
+	tlsConfig.BuildNameToCertificate()
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
+
+	client := &http.Client{Transport: transport}
+	return &Client{baseUrl, "", "", client, verbose}
+}
+
 func (c *Client) Get(v interface{}, path string, params map[string]string) error {
 	pathAndParams := path
 	//TODO: Improve this
@@ -117,6 +147,7 @@ func (c *Client) Get(v interface{}, path string, params map[string]string) error
 			pathAndParams += fmt.Sprintf("%s=%s&", k, url.QueryEscape(v))
 		}
 	}
+	log.Println(pathAndParams)
 	resp, err := c.httpGet(pathAndParams)
 	if err != nil {
 		log.Print(err)
@@ -161,7 +192,7 @@ func (c *Client) EventCounts(query string, summarizeBy string, extraParams map[s
 	path := "event-counts"
 	ret := []EventCountJson{}
 	params := mergeParam("query", query, extraParams)
-	params = mergeParam("summarize-by", summarizeBy, params)
+	params = mergeParam("summarize_by", summarizeBy, params)
 	err := c.Get(&ret, path, params)
 	return ret, err
 }
